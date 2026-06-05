@@ -43,18 +43,6 @@ If you need to tweak any of these, fork the module — they're tuned together an
 
 Refer to the [examples](./examples/) directory for detailed configuration examples.
 
-## Known issues
-
-**Domain `id` consistency check fails after a stop → redefine → restart cycle.** The libvirt provider marks `libvirt_domain.id` as `Computed` with `UseStateForUnknown`, but the underlying value is libvirtd's runtime ID, which gets reassigned every time the VM starts. When an update restarts the VM and libvirtd hands out a different ID, Terraform's post-apply consistency check trips and the apply aborts before saving state.
-
-Recover with:
-
-```
-terraform apply -refresh-only
-```
-
-That produces a state-only update (old id → new id) you can approve.
-
 ## Requirements
 
 | Name | Version |

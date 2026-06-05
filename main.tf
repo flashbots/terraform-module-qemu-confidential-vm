@@ -7,7 +7,7 @@ locals {
     T = 1099511627776
   }
 
-  # Parse each volume's capacity (e.g. "2.2T") and convert to an integer
+  # Parse each volume's capacity (e.g. "1G") and convert to an integer
   # byte count. libvirt scales capacity as an integer, so a fractional
   # value with a large unit must be resolved to bytes here.
   volume_capacity = {
