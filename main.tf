@@ -28,7 +28,6 @@ resource "libvirt_volume" "this" {
 
   # capacity defaults to bytes when capacity_unit is unset
   capacity = local.volume_capacity_bytes[each.key]
-  # allocation = local.volume_capacity_bytes[each.key]
 
   target = {
     format = { type = each.value.format }
