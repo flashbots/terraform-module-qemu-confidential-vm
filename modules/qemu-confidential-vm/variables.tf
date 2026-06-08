@@ -31,6 +31,95 @@ variable "os_loader" {
   nullable    = false
 }
 
+variable "cpu" {
+  type = object({
+    topology = optional(object({
+      sockets = number
+      cores   = number
+      threads = number
+      dies    = optional(number)
+    }))
+    numa = optional(list(object({
+      cpus      = string
+      memory    = string
+      host_cpus = optional(string)
+      host_node = optional(number)
+    })))
+    pinning = optional(object({
+      emulator_cpus  = optional(string)
+      io_thread_cpus = optional(string)
+    }))
+  })
+  description = <<-EOT
+    Optional CPU topology, NUMA, and pinning configuration. The TDX-required
+    `cpu.mode = "host-passthrough"` and `cpu.check = "none"` are always
+    set by the module — only the topology, NUMA layout, and pinning are exposed.
+
+    - `topology`: SMP layout. The product
+      `sockets * (dies | 1) * cores * threads` must equal `vcpu`.
+    - `numa`: ordered list of NUMA cells. Each cell gets an auto-assigned
+      `nodeid` from its list index (0, 1, 2, ...). Per cell:
+      - `cpus`: vCPU list in libvirt format (e.g. `"0-31"`, `"0,2-7"`)
+      - `memory`: cell memory size with K/M/G suffix (e.g. `"32G"`)
+      - `host_cpus` (optional): the **host** physical CPU set this cell's
+        vCPUs are pinned to (libvirt cpuset syntax, e.g. `"0-13,28-41"`).
+        Copy the per-node CPU list straight from `numactl -H` on the host.
+      - `host_node` (optional): the **host** NUMA node id this cell's memory
+        is strictly bound to (e.g. `0`).
+    - `pinning` (optional): where to place the non-vCPU threads.
+      - `emulator_cpus`: host cpuset for the QEMU emulator thread.
+      - `io_thread_cpus`: host cpuset for the disk IOThreads.
+
+    ### CPU pinning
+
+    Pinning is enabled per-VM by setting `host_cpus` + `host_node` on the NUMA
+    cells (all-or-nothing: a cell must set both or neither). When enabled the
+    module switches `vcpu_placement` from `"auto"` (numad) to `"static"` and
+    emits, for every guest vCPU in a cell, a `<vcpupin>` onto that cell's
+    `host_cpus`, plus a strict `<memnode>` binding the cell's memory to its
+    `host_node`. This keeps each vCPU and the memory it touches on the same
+    physical NUMA node, avoiding cross-socket memory latency.
+
+    **The `host_cpus`/`host_node`/`*_cpus` values are host-specific.** CPU
+    enumeration is BIOS-dependent — always derive them from the live host
+    (`numactl -H`, `lscpu -e`, `/sys/devices/system/cpu/cpu*/topology/thread_siblings_list`).
+    Wrong values silently hurt performance instead of helping.
+
+    Example — `-smp 56,sockets=2,cores=14,threads=2`, two NUMA cells each
+    pinned to a host node (host CPU lists taken from `numactl -H`):
+    ```terraform
+    cpu = {
+      topology = { sockets = 2, cores = 14, threads = 2 }
+      numa = [
+        { cpus = "0-27",  memory = "64G", host_cpus = "0-13,28-41",  host_node = 0 },
+        { cpus = "28-55", memory = "64G", host_cpus = "14-27,42-55", host_node = 1 },
+      ]
+      pinning = {
+        emulator_cpus  = "0-13,28-41"
+        io_thread_cpus = "0-13,28-41"
+      }
+    }
+    ```
+  EOT
+  default     = null
+
+  validation {
+    condition = var.cpu == null || var.cpu.numa == null || alltrue([
+      for c in var.cpu.numa : can(regex("^[0-9]+[KMG]$", c.memory))
+    ])
+    error_message = "NUMA cell memory must be a number followed by K, M, or G (e.g. \"32G\")."
+  }
+
+  validation {
+    # Pinning is all-or-nothing per cell: host_cpus and host_node must be set
+    # together (both pin compute and memory of the cell to the same host node).
+    condition = var.cpu == null || var.cpu.numa == null || alltrue([
+      for c in var.cpu.numa : (c.host_cpus == null) == (c.host_node == null)
+    ])
+    error_message = "Each NUMA cell must set both host_cpus and host_node to enable pinning, or neither."
+  }
+}
+
 variable "disks" {
   type = list(object({
     source = object({

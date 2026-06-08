@@ -21,9 +21,9 @@ module "confidential_vm" {
     }
 
     "persistent" = {
-      pool       = "vm-storage"
-      capacity   = "1G"
-      format     = "raw"
+      pool     = "vm-storage"
+      capacity = "1G"
+      format   = "raw"
     }
   }
 
@@ -43,10 +43,10 @@ module "confidential_vm" {
         },
         # Persistent data disk: writable block device from the host
         {
-          source = { volume = { pool = "vm-storage", volume = "persistent" } }
-          target = { dev = "vdb" }
-          driver = { type = "raw", cache = "none", io = "native", discard = "unmap" }
-          serial = "persistent"
+          source       = { volume = { pool = "vm-storage", volume = "persistent" } }
+          target       = { dev = "vdb" }
+          driver       = { type = "raw", cache = "none", io = "native", discard = "unmap" }
+          serial       = "persistent"
           io_threading = true
         },
       ]

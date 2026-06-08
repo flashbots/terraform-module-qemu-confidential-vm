@@ -1,11 +1,76 @@
 locals {
   # Parse the memory suffix (K/M/G) into a libvirt amount + IEC unit.
-  memory_parts  = regex("^([0-9]+)([KMG])$", var.memory)
-  memory_amount = tonumber(local.memory_parts[0])
-  memory_unit   = { K = "KiB", M = "MiB", G = "GiB" }[local.memory_parts[1]]
+  size_unit_lookup = { K = "KiB", M = "MiB", G = "GiB" }
+  memory_parts     = regex("^([0-9]+)([KMG])$", var.memory)
+  memory_amount    = tonumber(local.memory_parts[0])
+  memory_unit      = local.size_unit_lookup[local.memory_parts[1]]
+
+  # NUMA cells: parse per-cell memory suffix, auto-assign nodeid from index.
+  numa_cells = var.cpu != null && var.cpu.numa != null ? [
+    for i, c in var.cpu.numa : {
+      id     = i
+      cpus   = c.cpus
+      memory = tonumber(regex("^([0-9]+)([KMG])$", c.memory)[0])
+      unit   = local.size_unit_lookup[regex("^([0-9]+)([KMG])$", c.memory)[1]]
+    }
+  ] : null
 
   io_thread_count = 4
   disk_queues     = 8
+
+  # CPU pinning is opted into per NUMA cell via host_cpus/host_node. The
+  # variable validation guarantees both are set together, so testing host_cpus
+  # on any cell is enough to detect the intent.
+  cpu_pinning_enabled = (
+    var.cpu != null &&
+    var.cpu.numa != null &&
+    length([for c in var.cpu.numa : c if c.host_cpus != null]) > 0
+  )
+
+  # One <vcpupin> per guest vCPU, pinning every vCPU in a cell to that cell's
+  # host_cpus. Guest cpusets are expanded ("0-27" / "0,2-7" -> [0,1,...]) so we
+  # can emit an entry per vCPU index, which is what libvirt's cputune expects.
+  vcpu_pins = local.cpu_pinning_enabled ? flatten([
+    for c in var.cpu.numa : [
+      for v in flatten([
+        for part in split(",", c.cpus) :
+        strcontains(part, "-") ?
+        range(tonumber(split("-", part)[0]), tonumber(split("-", part)[1]) + 1) :
+        [tonumber(part)]
+      ]) : { vcpu = v, cpu_set = c.host_cpus }
+    ] if c.host_cpus != null
+  ]) : null
+
+  # Strict per-cell memory binding: guest cell `i` -> host NUMA node host_node.
+  numa_mem_nodes = local.cpu_pinning_enabled ? [
+    for i, c in var.cpu.numa : {
+      cell_id = i
+      mode    = "strict"
+      nodeset = tostring(c.host_node)
+    } if c.host_node != null
+  ] : null
+
+  cpu_tune = local.cpu_pinning_enabled ? {
+    vcpu_pin = local.vcpu_pins
+    emulator_pin = try(var.cpu.pinning.emulator_cpus, null) != null ? {
+      cpu_set = var.cpu.pinning.emulator_cpus
+    } : null
+    io_thread_pin = try(var.cpu.pinning.io_thread_cpus, null) != null ? [
+      for tid in range(1, local.io_thread_count + 1) :
+      { io_thread = tid, cpu_set = var.cpu.pinning.io_thread_cpus }
+    ] : null
+  } : null
+
+  numa_tune = local.cpu_pinning_enabled ? {
+    # Global policy spanning every pinned host node, plus the precise per-cell
+    # bindings. Setting both keeps libvirt happy across versions.
+    memory = {
+      mode      = "strict"
+      placement = "static"
+      nodeset   = join(",", distinct([for c in var.cpu.numa : tostring(c.host_node) if c.host_node != null]))
+    }
+    mem_nodes = local.numa_mem_nodes
+  } : null
 
   disk_io_thread_map = {
     io_thread = [
@@ -62,9 +127,10 @@ resource "libvirt_domain" "this" {
   type    = "kvm"
   running = true
 
-  # `numad` must be installed on the host for `auto` placement to work
+  # Without pinning we let numad place the domain (`auto`, requires numad on
+  # the host). With explicit vCPU pinning the placement must be `static`.
   vcpu           = var.vcpu
-  vcpu_placement = "auto"
+  vcpu_placement = local.cpu_pinning_enabled ? "static" : "auto"
 
   io_threads = local.io_thread_count
   io_thread_i_ds = {
@@ -102,9 +168,16 @@ resource "libvirt_domain" "this" {
   }
 
   cpu = {
-    mode  = "host-passthrough"
-    check = "none"
+    mode     = "host-passthrough"
+    check    = "none"
+    topology = try(var.cpu.topology, null)
+    numa     = local.numa_cells != null ? { cell = local.numa_cells } : null
   }
+
+  # vCPU/IOThread/emulator pinning and strict per-cell memory binding. Both are
+  # null (omitted) unless pinning is opted into via the NUMA cells' host_cpus.
+  cpu_tune  = local.cpu_tune
+  numa_tune = local.numa_tune
 
   clock = {
     offset = "utc"

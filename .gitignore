@@ -4,3 +4,4 @@
 **/*.tfvars*
 **/.terraform*
 .claude
+memory

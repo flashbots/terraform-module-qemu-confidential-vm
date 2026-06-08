@@ -27,7 +27,7 @@ resource "libvirt_volume" "this" {
   pool = each.value.pool
 
   # capacity defaults to bytes when capacity_unit is unset
-  capacity   = local.volume_capacity_bytes[each.key]
+  capacity = local.volume_capacity_bytes[each.key]
   # allocation = local.volume_capacity_bytes[each.key]
 
   target = {
@@ -58,6 +58,7 @@ module "cvm" {
   vcpu       = each.value.vcpu
   memory     = each.value.memory
   os_loader  = each.value.os_loader
+  cpu        = each.value.cpu
   disks      = each.value.disks
   interfaces = each.value.interfaces
 

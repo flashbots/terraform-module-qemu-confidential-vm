@@ -76,6 +76,25 @@ variable "vms" {
     memory    = string
     os_loader = optional(string, "/usr/share/ovmf/OVMF.inteltdx.fd")
 
+    cpu = optional(object({
+      topology = optional(object({
+        sockets = number
+        cores   = number
+        threads = number
+        dies    = optional(number)
+      }))
+      numa = optional(list(object({
+        cpus      = string
+        memory    = string
+        host_cpus = optional(string)
+        host_node = optional(number)
+      })))
+      pinning = optional(object({
+        emulator_cpus  = optional(string)
+        io_thread_cpus = optional(string)
+      }))
+    }))
+
     disks = list(object({
       source = object({
         file  = optional(string)
