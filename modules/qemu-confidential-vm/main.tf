@@ -5,13 +5,18 @@ locals {
   memory_amount    = tonumber(local.memory_parts[0])
   memory_unit      = local.size_unit_lookup[local.memory_parts[1]]
 
+  # libvirt always normalises NUMA cell memory to KiB on readback (e.g. "64G"
+  # becomes 67108864 KiB). Emit KiB directly so the planned state matches what
+  # libvirt reports back and the domain doesn't perpetually drift.
+  size_kib_lookup = { K = 1, M = 1024, G = 1048576 }
+
   # NUMA cells: parse per-cell memory suffix, auto-assign nodeid from index.
   numa_cells = var.cpu != null && var.cpu.numa != null ? [
     for i, c in var.cpu.numa : {
       id     = i
       cpus   = c.cpus
-      memory = tonumber(regex("^([0-9]+)([KMG])$", c.memory)[0])
-      unit   = local.size_unit_lookup[regex("^([0-9]+)([KMG])$", c.memory)[1]]
+      memory = tonumber(regex("^([0-9]+)([KMG])$", c.memory)[0]) * local.size_kib_lookup[regex("^([0-9]+)([KMG])$", c.memory)[1]]
+      unit   = "KiB"
     }
   ] : null
 
@@ -61,13 +66,38 @@ locals {
     ] : null
   } : null
 
+  # libvirt canonicalises <numatune> nodesets to a sorted, range-collapsed form
+  # ("0,1" -> "0-1", "0,2" -> "0,2"), and omits `placement` (it defaults to
+  # `static` whenever a nodeset is given under static vCPU placement). Compute
+  # that exact form here so the global numatune policy doesn't drift on readback.
+  pinned_host_nodes = local.cpu_pinning_enabled ? distinct([
+    for c in var.cpu.numa : c.host_node if c.host_node != null
+  ]) : []
+  host_node_min = length(local.pinned_host_nodes) > 0 ? min(local.pinned_host_nodes...) : 0
+  host_node_max = length(local.pinned_host_nodes) > 0 ? max(local.pinned_host_nodes...) : 0
+  # Ascending, de-duplicated node ids (range() emits them in order).
+  sorted_host_nodes = [
+    for n in range(local.host_node_min, local.host_node_max + 1) : n
+    if contains(local.pinned_host_nodes, n)
+  ]
+  # A node opens a new range when its immediate predecessor is absent.
+  host_node_run_starts = [
+    for n in local.sorted_host_nodes : n
+    if !contains(local.pinned_host_nodes, n - 1)
+  ]
+  numatune_nodeset = join(",", [
+    for s in local.host_node_run_starts :
+    (min([for n in range(s, local.host_node_max + 2) : n if !contains(local.pinned_host_nodes, n)]...) - 1) == s
+    ? tostring(s)
+    : "${s}-${min([for n in range(s, local.host_node_max + 2) : n if !contains(local.pinned_host_nodes, n)]...) - 1}"
+  ])
+
   numa_tune = local.cpu_pinning_enabled ? {
     # Global policy spanning every pinned host node, plus the precise per-cell
     # bindings. Setting both keeps libvirt happy across versions.
     memory = {
-      mode      = "strict"
-      placement = "static"
-      nodeset   = join(",", distinct([for c in var.cpu.numa : tostring(c.host_node) if c.host_node != null]))
+      mode    = "strict"
+      nodeset = local.numatune_nodeset
     }
     mem_nodes = local.numa_mem_nodes
   } : null
