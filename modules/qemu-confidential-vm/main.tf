@@ -11,7 +11,9 @@ locals {
   size_kib_lookup = { K = 1, M = 1024, G = 1048576 }
 
   # NUMA cells: parse per-cell memory suffix, auto-assign nodeid from index.
-  numa_cells = var.cpu != null && var.cpu.numa != null ? [
+  # try() because TF's boolean operators do not short-circuit: evaluating
+  # `var.cpu.numa` crashes when var.cpu itself is null.
+  numa_cells = try(var.cpu.numa, null) != null ? [
     for i, c in var.cpu.numa : {
       id     = i
       cpus   = c.cpus
@@ -27,9 +29,7 @@ locals {
   # variable validation guarantees both are set together, so testing host_cpus
   # on any cell is enough to detect the intent.
   cpu_pinning_enabled = (
-    var.cpu != null &&
-    var.cpu.numa != null &&
-    length([for c in var.cpu.numa : c if c.host_cpus != null]) > 0
+    length([for c in coalesce(try(var.cpu.numa, null), []) : c if c.host_cpus != null]) > 0
   )
 
   # One <vcpupin> per guest vCPU, pinning every vCPU in a cell to that cell's
@@ -157,10 +157,10 @@ resource "libvirt_domain" "this" {
   type    = "kvm"
   running = true
 
-  # Without pinning we let numad place the domain (`auto`, requires numad on
-  # the host). With explicit vCPU pinning the placement must be `static`.
+  # Always static: `auto` would require numad on the host, and unpinned
+  # domains are perfectly fine with libvirt's default static placement.
   vcpu           = var.vcpu
-  vcpu_placement = local.cpu_pinning_enabled ? "static" : "auto"
+  vcpu_placement = "static"
 
   io_threads = local.io_thread_count
   io_thread_i_ds = {
@@ -201,7 +201,7 @@ resource "libvirt_domain" "this" {
     mode     = "host-passthrough"
     check    = "none"
     topology = try(var.cpu.topology, null)
-    numa     = local.numa_cells != null ? { cell = local.numa_cells } : null
+    numa     = local.numa_cells != null && length(coalesce(local.numa_cells, [])) > 0 ? { cell = local.numa_cells } : null
   }
 
   # vCPU/IOThread/emulator pinning and strict per-cell memory binding. Both are

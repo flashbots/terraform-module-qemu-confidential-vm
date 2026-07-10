@@ -104,8 +104,8 @@ variable "cpu" {
   default     = null
 
   validation {
-    condition = var.cpu == null || var.cpu.numa == null || alltrue([
-      for c in var.cpu.numa : can(regex("^[0-9]+[KMG]$", c.memory))
+    condition = alltrue([
+      for c in coalesce(try(var.cpu.numa, null), []) : can(regex("^[0-9]+[KMG]$", c.memory))
     ])
     error_message = "NUMA cell memory must be a number followed by K, M, or G (e.g. \"32G\")."
   }
@@ -113,8 +113,8 @@ variable "cpu" {
   validation {
     # Pinning is all-or-nothing per cell: host_cpus and host_node must be set
     # together (both pin compute and memory of the cell to the same host node).
-    condition = var.cpu == null || var.cpu.numa == null || alltrue([
-      for c in var.cpu.numa : (c.host_cpus == null) == (c.host_node == null)
+    condition = alltrue([
+      for c in coalesce(try(var.cpu.numa, null), []) : (c.host_cpus == null) == (c.host_node == null)
     ])
     error_message = "Each NUMA cell must set both host_cpus and host_node to enable pinning, or neither."
   }
