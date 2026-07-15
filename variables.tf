@@ -2,6 +2,7 @@ variable "volumes" {
   type = map(object({
     pool       = string
     capacity   = optional(string)
+    allocation = optional(string)
     format     = optional(string, "qcow2")
     source_url = optional(string)
     backing_store = optional(object({
@@ -26,6 +27,13 @@ variable "volumes" {
       (binary/IEC units). For example `"100G"` is 100 GiB, `"2.2T"` is
       2.2 TiB. Resolved to an integer byte count internally. Required unless
       `source_url` is set (in which case capacity is derived from the source).
+    - `allocation`: initial allocation, same format as `capacity`. Set it
+      equal to `capacity` for volumes in logical (LVM) pools: when the
+      requested allocation is lower than capacity, libvirt creates the LV as
+      a sparse snapshot with a copy-on-write area of only the allocated
+      size. The snapshot is irreversibly invalidated the moment writes
+      exceed that area, after which ALL I/O to the volume fails with EIO.
+      File-backed pools grow on demand and can safely omit it.
     - `format`: volume format (default `qcow2`)
     - `source_url`: URL to populate the volume from. Accepts `http(s)://...`,
       `file://...`, or a plain local file path. When set, the libvirt
@@ -52,8 +60,9 @@ variable "volumes" {
         }
       }
       "persistent" = {
-        pool     = "vm-storage"
-        capacity = "100G"
+        pool       = "vm-storage"
+        capacity   = "100G"
+        allocation = "100G"
       }
     }
     ```
@@ -67,6 +76,14 @@ variable "volumes" {
       v.capacity == null || can(regex("^[0-9]+([.][0-9]+)?[KMGT]$", v.capacity))
     ])
     error_message = "volume capacity must be null or a number (optionally fractional) followed by one of K, M, G, or T (e.g. \"100G\", \"2.2T\")."
+  }
+
+  validation {
+    condition = alltrue([
+      for k, v in var.volumes :
+      v.allocation == null || can(regex("^[0-9]+([.][0-9]+)?[KMGT]$", v.allocation))
+    ])
+    error_message = "volume allocation must be null or a number (optionally fractional) followed by one of K, M, G, or T (e.g. \"100G\", \"2.2T\")."
   }
 }
 

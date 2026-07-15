@@ -7,15 +7,23 @@ locals {
     T = 1099511627776
   }
 
-  # Parse each volume's capacity (e.g. "1G") and convert to an integer
-  # byte count. libvirt scales capacity as an integer, so a fractional
-  # value with a large unit must be resolved to bytes here.
+  # Parse each volume's capacity/allocation (e.g. "1G") and convert to an
+  # integer byte count. libvirt scales capacity as an integer, so a
+  # fractional value with a large unit must be resolved to bytes here.
   volume_capacity = {
     for k, v in var.volumes : k =>
     v.capacity != null ? regex("^([0-9]+(?:[.][0-9]+)?)([KMGT])$", v.capacity) : null
   }
   volume_capacity_bytes = {
     for k, parts in local.volume_capacity : k =>
+    parts != null ? floor(tonumber(parts[0]) * local.unit_bytes[parts[1]]) : null
+  }
+  volume_allocation = {
+    for k, v in var.volumes : k =>
+    v.allocation != null ? regex("^([0-9]+(?:[.][0-9]+)?)([KMGT])$", v.allocation) : null
+  }
+  volume_allocation_bytes = {
+    for k, parts in local.volume_allocation : k =>
     parts != null ? floor(tonumber(parts[0]) * local.unit_bytes[parts[1]]) : null
   }
 }
@@ -26,8 +34,9 @@ resource "libvirt_volume" "this" {
   name = each.key
   pool = each.value.pool
 
-  # capacity defaults to bytes when capacity_unit is unset
-  capacity = local.volume_capacity_bytes[each.key]
+  # capacity/allocation default to bytes when the *_unit attrs are unset
+  capacity   = local.volume_capacity_bytes[each.key]
+  allocation = local.volume_allocation_bytes[each.key]
 
   target = {
     format = { type = each.value.format }
