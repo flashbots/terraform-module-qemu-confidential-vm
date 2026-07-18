@@ -10,6 +10,13 @@ variable "vcpu" {
   nullable    = false
 }
 
+variable "autostart" {
+  type        = bool
+  description = "Start the domain automatically when the host boots"
+  default     = true
+  nullable    = false
+}
+
 variable "memory" {
   type        = string
   description = <<-EOT

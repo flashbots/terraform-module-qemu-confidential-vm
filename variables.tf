@@ -92,6 +92,7 @@ variable "vms" {
     vcpu      = number
     memory    = string
     os_loader = optional(string, "/usr/share/ovmf/OVMF.inteltdx.fd")
+    autostart = optional(bool, true)
 
     cpu = optional(object({
       topology = optional(object({

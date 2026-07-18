@@ -153,9 +153,10 @@ locals {
 }
 
 resource "libvirt_domain" "this" {
-  name    = var.vm_name
-  type    = "kvm"
-  running = true
+  name      = var.vm_name
+  type      = "kvm"
+  running   = true
+  autostart = var.autostart
 
   # Always static: `auto` would require numad on the host, and unpinned
   # domains are perfectly fine with libvirt's default static placement.

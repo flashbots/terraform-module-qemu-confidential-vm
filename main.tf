@@ -66,6 +66,7 @@ module "cvm" {
   vcpu       = each.value.vcpu
   memory     = each.value.memory
   os_loader  = each.value.os_loader
+  autostart  = each.value.autostart
   cpu        = each.value.cpu
   disks      = each.value.disks
   interfaces = each.value.interfaces
