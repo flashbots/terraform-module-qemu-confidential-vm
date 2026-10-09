@@ -191,6 +191,11 @@ variable "interfaces" {
     })
     mac        = optional(string)
     model_type = optional(string, "virtio")
+    driver = optional(object({
+      name          = optional(string)
+      queues        = optional(number)
+      rx_queue_size = optional(number)
+    }))
   }))
   description = <<-EOT
     List of network interfaces. Each entry sets exactly one of
@@ -201,6 +206,18 @@ variable "interfaces" {
     - `source.bridge`: name of a Linux bridge on the host
     - `mac`: MAC address; if unset, libvirt generates one
     - `model_type`: NIC model (default `virtio`)
+    - `driver.name`: virtio-net backend (`vhost` = in-kernel vhost-net,
+      `qemu` = userspace). If unset, libvirt uses vhost when available and
+      silently falls back to userspace otherwise.
+    - `driver.queues`: number of RX/TX queue pairs. Without it the NIC is
+      single-queue: the guest takes every RX interrupt on one vCPU and the
+      host serves the device from a single vhost worker. Each queue pair adds
+      one vhost worker on the host (placed with the emulator threads).
+    - `driver.rx_queue_size`: RX virtqueue depth in descriptors (256, 512 or
+      1024; QEMU default 256). A deeper ring absorbs inbound bursts before
+      the host tap starts dropping. The TX ring is fixed at 256 for
+      vhost-net, so it is not exposed.
+    Leaving `driver` unset emits no `<driver>` element (libvirt defaults).
   EOT
   nullable    = false
 
@@ -210,5 +227,21 @@ variable "interfaces" {
       length([for v in [i.source.network, i.source.bridge] : v if v != null]) == 1
     ])
     error_message = "Each interface must set exactly one of source.network or source.bridge."
+  }
+
+  validation {
+    condition = alltrue([
+      for i in var.interfaces :
+      try(i.driver.queues, null) == null || try(i.driver.queues >= 1 && floor(i.driver.queues) == i.driver.queues, false)
+    ])
+    error_message = "Interface driver.queues must be a positive integer."
+  }
+
+  validation {
+    condition = alltrue([
+      for i in var.interfaces :
+      try(i.driver.rx_queue_size, null) == null || contains([256, 512, 1024], try(i.driver.rx_queue_size, 0))
+    ])
+    error_message = "Interface driver.rx_queue_size must be one of 256, 512 or 1024."
   }
 }

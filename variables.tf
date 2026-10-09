@@ -145,6 +145,11 @@ variable "vms" {
       })
       mac        = optional(string)
       model_type = optional(string, "virtio")
+      driver = optional(object({
+        name          = optional(string)
+        queues        = optional(number)
+        rx_queue_size = optional(number)
+      }))
     }))
   }))
   description = <<-EOT

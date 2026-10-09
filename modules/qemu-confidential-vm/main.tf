@@ -145,6 +145,11 @@ locals {
   interfaces = [for i in var.interfaces : {
     model = { type = i.model_type }
     mac   = i.mac != null ? { address = i.mac } : null
+    driver = i.driver != null ? {
+      name          = i.driver.name
+      queues        = i.driver.queues
+      rx_queue_size = i.driver.rx_queue_size
+    } : null
     source = {
       network = i.source.network != null ? { network = i.source.network } : null
       bridge  = i.source.bridge != null ? { bridge = i.source.bridge } : null

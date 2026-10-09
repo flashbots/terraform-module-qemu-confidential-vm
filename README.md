@@ -86,6 +86,23 @@ For the boot image, set `read_only = true` and `boot_order = 1` (lower wins).
 
 Each entry in a VM's `interfaces` list sets exactly one of `source.network` (a libvirt network) or `source.bridge` (a host Linux bridge). The MAC address is left unset by default, so libvirt picks one; supply `mac` if you need it stable across recreates or pre-allocated upstream.
 
+By default the virtio NIC is single-queue: the guest handles every inbound packet's interrupt and softirq on one vCPU, and the host serves the device from one vhost worker. For busy guests, set `driver` to spread that work:
+
+```terraform
+interfaces = [
+  {
+    source = { bridge = "br0" }
+    driver = { name = "vhost", queues = 8, rx_queue_size = 1024 }
+  },
+]
+```
+
+- `queues`: RX/TX queue pairs. The guest's `virtio_net` enables all of them at boot and spreads their interrupts across vCPUs; the host gets one vhost worker per pair, placed with the emulator threads (`cpu.pinning.emulator_cpus` when pinned).
+- `rx_queue_size`: RX ring depth (256, 512 or 1024; QEMU default 256). A deeper ring absorbs inbound bursts before the host tap starts dropping. The TX ring stays at 256 because QEMU only honours larger TX rings for vhost-user.
+- `name = "vhost"` makes the in-kernel backend mandatory instead of silently falling back to userspace.
+
+Like any domain change, adding or changing `driver` on a running VM makes the provider shut the guest down gracefully (`update.shutdown`, 600 s), redefine the domain and start it again.
+
 ## CPU topology and NUMA
 
 `cpu.mode = "host-passthrough"` and `cpu.check = "none"` are required for TDX and always set by the module. Beyond that, an optional `cpu` field on each VM exposes the SMP topology and NUMA layout:
