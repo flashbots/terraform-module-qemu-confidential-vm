@@ -51,6 +51,7 @@ variable "cpu" {
       memory    = string
       host_cpus = optional(string)
       host_node = optional(number)
+      distances = optional(list(number))
     })))
     pinning = optional(object({
       emulator_cpus  = optional(string)
@@ -73,6 +74,12 @@ variable "cpu" {
         Copy the per-node CPU list straight from `numactl -H` on the host.
       - `host_node` (optional): the **host** NUMA node id this cell's memory
         is strictly bound to (e.g. `0`).
+      - `distances` (optional): this cell's row of the guest NUMA distance
+        matrix (ACPI SLIT), one value per cell in cell order. The cell's own
+        entry must be `10`, every other entry 11-255. Without it the guest
+        gets no SLIT and the kernel assumes `20` between every pair of nodes.
+        For pinned cells, copy the host's `numactl -H` distances between the
+        cells' `host_node`s. All-or-nothing: set it on every cell or none.
     - `pinning` (optional): where to place the non-vCPU threads.
       - `emulator_cpus`: host cpuset for the QEMU emulator thread.
       - `io_thread_cpus`: host cpuset for the disk IOThreads.
@@ -124,6 +131,35 @@ variable "cpu" {
       for c in coalesce(try(var.cpu.numa, null), []) : (c.host_cpus == null) == (c.host_node == null)
     ])
     error_message = "Each NUMA cell must set both host_cpus and host_node to enable pinning, or neither."
+  }
+
+  validation {
+    # QEMU needs the full matrix: a distance on some cells but not others
+    # leaves node pairs undefined.
+    condition = (
+      length([for c in coalesce(try(var.cpu.numa, null), []) : c if c.distances != null]) == 0 ||
+      alltrue([for c in coalesce(try(var.cpu.numa, null), []) : c.distances != null])
+    )
+    error_message = "NUMA distances are all-or-nothing: set distances on every cell, or on none."
+  }
+
+  validation {
+    condition = alltrue([
+      for c in coalesce(try(var.cpu.numa, null), []) :
+      c.distances == null || length(coalesce(c.distances, [])) == length(var.cpu.numa)
+    ])
+    error_message = "Each NUMA cell's distances must have exactly one entry per cell."
+  }
+
+  validation {
+    # libvirt: the local distance must be 10 and a remote one 11-255.
+    condition = alltrue(flatten([
+      for i, c in coalesce(try(var.cpu.numa, null), []) : [
+        for j, d in coalesce(c.distances, []) :
+        i == j ? d == 10 : (d > 10 && d <= 255 && floor(d) == d)
+      ]
+    ]))
+    error_message = "NUMA distances: a cell's distance to itself must be 10, to any other cell an integer 11-255."
   }
 }
 

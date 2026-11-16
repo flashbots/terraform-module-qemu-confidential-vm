@@ -106,6 +106,7 @@ variable "vms" {
         memory    = string
         host_cpus = optional(string)
         host_node = optional(number)
+        distances = optional(list(number))
       })))
       pinning = optional(object({
         emulator_cpus  = optional(string)

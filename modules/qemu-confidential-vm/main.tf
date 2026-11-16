@@ -13,12 +13,19 @@ locals {
   # NUMA cells: parse per-cell memory suffix, auto-assign nodeid from index.
   # try() because TF's boolean operators do not short-circuit: evaluating
   # `var.cpu.numa` crashes when var.cpu itself is null.
+  #
+  # Distances become the guest's ACPI SLIT. The full row (local entry
+  # included) is emitted in cell order because that is exactly what libvirt
+  # reads back; a partial row would be completed by libvirt and drift.
   numa_cells = try(var.cpu.numa, null) != null ? [
     for i, c in var.cpu.numa : {
       id     = i
       cpus   = c.cpus
       memory = tonumber(regex("^([0-9]+)([KMG])$", c.memory)[0]) * local.size_kib_lookup[regex("^([0-9]+)([KMG])$", c.memory)[1]]
       unit   = "KiB"
+      distances = c.distances != null ? {
+        siblings = [for j, d in c.distances : { id = j, value = d }]
+      } : null
     }
   ] : null
 
