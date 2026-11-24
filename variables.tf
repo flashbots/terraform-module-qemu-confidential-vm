@@ -36,8 +36,10 @@ variable "volumes" {
       File-backed pools grow on demand and can safely omit it.
     - `format`: volume format (default `qcow2`)
     - `source_url`: URL to populate the volume from. Accepts `http(s)://...`,
-      `file://...`, or a plain local file path. When set, the libvirt
-      provider uploads the file into the pool at apply time.
+      `s3://<bucket>/<key>` (private Cloudflare R2 bucket, see
+      `r2_account_id`), `file://...`, or a plain local file path. When set,
+      the libvirt provider uploads the file into the pool at apply time.
+      Changing it replaces the volume.
     - `backing_store`: optional copy-on-write backing for the volume.
       `path` is the path of the backing file on the host; `format` defaults
       to `qcow2`.
@@ -85,6 +87,23 @@ variable "volumes" {
     ])
     error_message = "volume allocation must be null or a number (optionally fractional) followed by one of K, M, G, or T (e.g. \"100G\", \"2.2T\")."
   }
+}
+
+variable "r2_account_id" {
+  type        = string
+  description = <<-EOT
+    Cloudflare account ID of the R2 buckets in `s3://<bucket>/<key>` volume
+    sources. Required when any volume uses such a source.
+
+    The credentials come from the `CLOUDFLARE_API_TOKEN` environment variable
+    (the same one the Cloudflare provider reads); the token needs read access
+    to the bucket. On every plan the module signs a short-lived GET URL for
+    each `s3://` volume with `scripts/r2-presign.py` (needs `python3`), which
+    calls the Cloudflare API once to look up the token ID. The token itself is
+    not stored in the configuration or the state; the signed URL (valid for
+    24 hours) is.
+  EOT
+  default     = null
 }
 
 variable "vms" {
