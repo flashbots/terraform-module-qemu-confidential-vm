@@ -46,23 +46,56 @@ Refer to the [examples](./examples/) directory for detailed configuration exampl
 ## Requirements
 
 | Name | Version |
-|------|---------|
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.1 |
-| <a name="requirement_libvirt"></a> [libvirt](#requirement\_libvirt) | >= 0.9.7 |
+| ---- | ------- |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.4 |
+| <a name="requirement_external"></a> [external](#requirement\_external) | >= 2.3 |
+| <a name="requirement_libvirt"></a> [libvirt](#requirement\_libvirt) | >= 0.9.8 |
 
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
-| <a name="input_volumes"></a> [volumes](#input\_volumes) | Map of libvirt storage volumes to create in pre-existing pools, keyed by<br/>volume name. The pool itself is not managed by this module and must<br/>already exist on the host.<br/><br/>Per-volume fields:<br/>- `pool`: name of the existing libvirt storage pool to create the volume in<br/>- `capacity`: volume capacity as a number (optionally fractional) with a<br/>  unit suffix, where `K` = KiB, `M` = MiB, `G` = GiB, `T` = TiB. For<br/>  example `"100G"` is 100 GiB, `"2.2T"` is 2.2 TiB. Required unless<br/>  `source_url` is set (capacity derived from the source).<br/>- `format`: volume format (default `qcow2`)<br/>- `source_url`: URL to populate the volume from. Accepts `http(s)://...`,<br/>  `file://...`, or a plain local file path. When set, the libvirt<br/>  provider uploads the file into the pool at apply time.<br/>- `backing_store`: optional copy-on-write backing for the volume.<br/>  `path` is the path of the backing file on the host; `format` defaults<br/>  to `qcow2`.<br/>- `permissions`: optional `{ owner, group, mode }` for the resulting<br/>  file on the host. Useful when the upload-time uid (the user running<br/>  `terraform apply`) wouldn't otherwise be readable by the qemu user.<br/>  For example `{ owner = "root", group = "root", mode = "0644" }`<br/>  makes the volume world-readable regardless of who applied.<br/><br/>Example:<pre>terraform<br/>volumes = {<br/>  "buildernet-image.qcow2" = {<br/>    pool       = "default"<br/>    source_url = "https://downloads.buildernet.org/buildernet-images/v2.6.0/buildernet-qemu_v2.6.0.qcow2"<br/>    permissions = {<br/>      owner = "root"<br/>      group = "root"<br/>      mode  = "0644"<br/>    }<br/>  }<br/>  "persistent" = {<br/>    pool     = "vm-storage"<br/>    capacity = "100G"<br/>  }<br/>}</pre> | <pre>map(object({<br/>    pool       = string<br/>    capacity   = optional(string)<br/>    format     = optional(string, "qcow2")<br/>    source_url = optional(string)<br/>    backing_store = optional(object({<br/>      path   = string<br/>      format = optional(string, "qcow2")<br/>    }))<br/>    permissions = optional(object({<br/>      owner = optional(string)<br/>      group = optional(string)<br/>      mode  = optional(string)<br/>    }))<br/>  }))</pre> | `{}` | no |
+| ---- | ----------- | ---- | ------- | :------: |
+| <a name="input_r2_account_id"></a> [r2\_account\_id](#input\_r2\_account\_id) | Cloudflare account ID of the R2 buckets in `s3://<bucket>/<key>` volume<br/>sources. Required when any volume uses such a source.<br/><br/>The credentials come from the `CLOUDFLARE_API_TOKEN` environment variable<br/>(the same one the Cloudflare provider reads); the token needs read access<br/>to the bucket. On every plan the module signs a short-lived GET URL for<br/>each `s3://` volume with `scripts/r2-presign.py` (needs `python3`), which<br/>calls the Cloudflare API once to look up the token ID. The token itself is<br/>not stored in the configuration or the state; the signed URL (valid for<br/>24 hours) is. | `string` | `null` | no |
 | <a name="input_vms"></a> [vms](#input\_vms) | Map of VM configurations keyed by VM name. See the inner<br/>`modules/qemu-confidential-vm` module variables for the meaning of each<br/>field.<br/><br/>Example:<pre>terraform<br/>vms = {<br/>  "cvm-01" = {<br/>    vcpu   = 32<br/>    memory = "64G"<br/><br/>    disks = [<br/>      {<br/>        source     = { volume = { pool = "default", volume = "buildernet-image.qcow2" } }<br/>        target     = { dev = "vdc" }<br/>        driver     = { type = "qcow2" }<br/>        read_only  = true<br/>        boot_order = 1<br/>      },<br/>      {<br/>        source = { block = "/dev/vg0/cvm-01" }<br/>        target = { dev = "vda" }<br/>        driver = { type = "raw", cache = "none", io = "native", discard = "unmap" }<br/>        serial = "persistent"<br/>      },<br/>    ]<br/><br/>    interfaces = [<br/>      { source = { network = "default" } },<br/>      { source = { bridge = "br0" }, mac = "52:54:00:aa:bb:cc" },<br/>    ]<br/>  }<br/>}</pre> | <pre>map(object({<br/>    vcpu      = number<br/>    memory    = string<br/>    os_loader = optional(string, "/usr/share/ovmf/OVMF.inteltdx.fd")<br/>    autostart = optional(bool, true)<br/><br/>    cpu = optional(object({<br/>      topology = optional(object({<br/>        sockets = number<br/>        cores   = number<br/>        threads = number<br/>        dies    = optional(number)<br/>      }))<br/>      numa = optional(list(object({<br/>        cpus      = string<br/>        memory    = string<br/>        host_cpus = optional(string)<br/>        host_node = optional(number)<br/>        distances = optional(list(number))<br/>      })))<br/>      pinning = optional(object({<br/>        emulator_cpus  = optional(string)<br/>        io_thread_cpus = optional(string)<br/>      }))<br/>    }))<br/><br/>    disks = list(object({<br/>      source = object({<br/>        file  = optional(string)<br/>        block = optional(string)<br/>        volume = optional(object({<br/>          pool   = string<br/>          volume = string<br/>        }))<br/>      })<br/>      target = object({<br/>        dev = string<br/>        bus = optional(string, "virtio")<br/>      })<br/>      driver = optional(object({<br/>        type    = optional(string, "raw")<br/>        cache   = optional(string)<br/>        io      = optional(string)<br/>        discard = optional(string)<br/>      }), {})<br/>      read_only    = optional(bool, false)<br/>      serial       = optional(string)<br/>      boot_order   = optional(number)<br/>      io_threading = optional(bool)<br/>    }))<br/><br/>    interfaces = list(object({<br/>      source = object({<br/>        network = optional(string)<br/>        bridge  = optional(string)<br/>      })<br/>      mac        = optional(string)<br/>      model_type = optional(string, "virtio")<br/>      driver = optional(object({<br/>        name          = optional(string)<br/>        queues        = optional(number)<br/>        rx_queue_size = optional(number)<br/>      }))<br/>    }))<br/>  }))</pre> | n/a | yes |
+| <a name="input_volumes"></a> [volumes](#input\_volumes) | Map of libvirt storage volumes to create in pre-existing pools, keyed by<br/>volume name. The pool itself is not managed by this module and must<br/>already exist on the host.<br/><br/>Per-volume fields:<br/>- `pool`: name of the existing libvirt storage pool to create the volume in<br/>- `capacity`: volume capacity as a number (optionally fractional) with a<br/>  unit suffix, where `K` = KiB, `M` = MiB, `G` = GiB, `T` = TiB<br/>  (binary/IEC units). For example `"100G"` is 100 GiB, `"2.2T"` is<br/>  2.2 TiB. Resolved to an integer byte count internally. Required unless<br/>  `source_url` is set (in which case capacity is derived from the source).<br/>- `allocation`: initial allocation, same format as `capacity`. Set it<br/>  equal to `capacity` for volumes in logical (LVM) pools: when the<br/>  requested allocation is lower than capacity, libvirt creates the LV as<br/>  a sparse snapshot with a copy-on-write area of only the allocated<br/>  size. The snapshot is irreversibly invalidated the moment writes<br/>  exceed that area, after which ALL I/O to the volume fails with EIO.<br/>  File-backed pools grow on demand and can safely omit it.<br/>- `format`: volume format (default `qcow2`)<br/>- `source_url`: URL to populate the volume from. Accepts `http(s)://...`,<br/>  `s3://<bucket>/<key>` (private Cloudflare R2 bucket, see<br/>  `r2_account_id`), `file://...`, or a plain local file path. When set,<br/>  the libvirt provider uploads the file into the pool at apply time.<br/>  Changing it replaces the volume.<br/>- `backing_store`: optional copy-on-write backing for the volume.<br/>  `path` is the path of the backing file on the host; `format` defaults<br/>  to `qcow2`.<br/>- `permissions`: optional `{ owner, group, mode }` for the resulting<br/>  file on the host. Useful when the upload-time uid (the user running<br/>  `terraform apply`) wouldn't otherwise be readable by the qemu user.<br/>  For example `{ owner = "root", group = "root", mode = "0644" }`<br/>  makes the volume world-readable regardless of who applied.<br/><br/>Example:<pre>terraform<br/>volumes = {<br/>  "buildernet-image.qcow2" = {<br/>    pool       = "default"<br/>    source_url = "https://downloads.buildernet.org/buildernet-images/v2.6.0/buildernet-qemu_v2.6.0.qcow2"<br/>    permissions = {<br/>      owner = "root"<br/>      group = "root"<br/>      mode  = "0644"<br/>    }<br/>  }<br/>  "persistent" = {<br/>    pool       = "vm-storage"<br/>    capacity   = "100G"<br/>    allocation = "100G"<br/>  }<br/>}</pre> | <pre>map(object({<br/>    pool       = string<br/>    capacity   = optional(string)<br/>    allocation = optional(string)<br/>    format     = optional(string, "qcow2")<br/>    source_url = optional(string)<br/>    backing_store = optional(object({<br/>      path   = string<br/>      format = optional(string, "qcow2")<br/>    }))<br/>    permissions = optional(object({<br/>      owner = optional(string)<br/>      group = optional(string)<br/>      mode  = optional(string)<br/>    }))<br/>  }))</pre> | `{}` | no |
 
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_vm_details"></a> [vm\_details](#output\_vm\_details) | Details of created VMs |
 | <a name="output_volumes"></a> [volumes](#output\_volumes) | Map of libvirt volumes created by this module |
+
+## Private image sources (`s3://`)
+
+A volume's `source_url` can be `s3://<bucket>/<key>` for an object in a private Cloudflare R2 bucket. Set `r2_account_id` in the module call and export a Cloudflare API token with read access to the bucket before running terraform, as for the Cloudflare provider:
+
+```bash
+export CLOUDFLARE_API_TOKEN=...
+terraform plan
+```
+
+```terraform
+module "cvm" {
+  # ...
+  r2_account_id = "<cloudflare-account-id>"
+
+  volumes = {
+    "image-v1.2.3.qcow2" = {
+      pool       = "pool"
+      source_url = "s3://<bucket>/images/v1.2.3/image-v1.2.3.qcow2"
+    }
+  }
+}
+```
+
+How it works:
+- On every plan, `scripts/r2-presign.py` (Python standard library only) makes a GET URL signed for 24 hours. R2 S3 credentials are derived from the token: the access key ID is the token ID, looked up with one Cloudflare API call, and the secret is the SHA-256 hash of the token.
+- The libvirt provider downloads that URL from the machine running terraform when it creates the volume. Apply a saved plan within 24 hours.
+- The volume is replaced when `source_url` changes, not when the signed URL changes.
+- The token is not stored in the configuration or the state. The signed URL is stored in the state and works until it expires.
+- Every plan of a configuration with `s3://` volumes needs `CLOUDFLARE_API_TOKEN`, even when nothing changes.
+- Upgrading from an earlier version of this module adds one `terraform_data.volume_source` per volume to the first plan and changes nothing else (existing volumes are not replaced). This version needs Terraform >= 1.4 and the `hashicorp/external` provider (`terraform init -upgrade`).
 
 ## Size suffixes
 
